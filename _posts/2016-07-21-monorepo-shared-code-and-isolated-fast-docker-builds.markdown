@@ -3,6 +3,7 @@ layout: post
 title:  "Monorepo, Shared Code and Isolated Fast Docker Builds"
 date:   2016-07-21
 categories: devops 
+comments: true
 ---
 Docker does not make it easy for those who want to do isolated builds of separate applications using shared code in a monorepo.
 

@@ -3,6 +3,7 @@ layout: post
 title:  "Safeguarding your deployments with Packer"
 date:   2016-07-05
 categories: devops 
+comments: true
 ---
 For me, one of the greatest challenges of building our solution was making sure we had the ability to deploy on-premise, or on any cloud provider. 
 

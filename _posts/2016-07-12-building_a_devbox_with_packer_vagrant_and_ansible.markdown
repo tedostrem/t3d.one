@@ -3,6 +3,7 @@ layout: post
 title:  "Building a Devbox with Packer, Vagrant and Ansible"
 date:   2016-07-12
 categories: devops 
+comments: true
 ---
 
 In the previous article [Safeguarding your deployments with packer](/devops/2016/07/05/safeguarding_your_deployments_with_packer) we explained in theory how we can use Packer to achieve immutable server configurations.
