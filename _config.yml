@@ -7,7 +7,6 @@ permalink:        pretty
 
 # Setup
 title:            Ted Östrem 
-tagline:          'A Jekyll theme'
 description: > # ignore linebreak until url
   A Swedish software engineer and contractor in Beijing. Enjoy helping startups with backend systems, infrastructure, devops, automation, tool building and development processes.
 url:              http://t3d.one
