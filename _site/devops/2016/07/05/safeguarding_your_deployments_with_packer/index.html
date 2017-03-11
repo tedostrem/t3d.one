@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+  <head>
+  <link href="http://gmpg.org/xfn/11" rel="profile">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+
+  <!-- Enable responsiveness on mobile devices-->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+  <title>
+    
+      Safeguarding your deployments with Packer &middot; Ted Östrem
+    
+  </title>
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="/public/css/poole.css">
+  <link rel="stylesheet" href="/public/css/syntax.css">
+  <link rel="stylesheet" href="/public/css/hyde.css">
+  <link rel="stylesheet" href="http://fonts.googleapis.com/css?family=PT+Sans:400,400italic,700|Abril+Fatface">
+
+  <!-- Icons -->
+  <link rel="apple-touch-icon-precomposed" sizes="144x144" href="/public/apple-touch-icon-144-precomposed.png">
+                                 <link rel="shortcut icon" href="/public/favicon.ico">
+
+  <!-- RSS -->
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/atom.xml">
+</head>
+
+
+  <body> 
+    <div class="sidebar">
+  <div class="container sidebar-sticky">
+    <div class="sidebar-about">
+      <h1>
+        <a href="/">
+          Ted Östrem
+        </a>
+      </h1>
+      <p class="lead">A Swedish software engineer and contractor in Beijing. Enjoy helping startups with backend systems, infrastructure, devops, automation, tool building and development processes.
+</p>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="sidebar-nav-item" href="/">Home</a>
+
+      
+
+      
+      
+        
+          
+        
+      
+        
+          
+            <a class="sidebar-nav-item" href="/about/">About</a>
+          
+        
+      
+        
+      
+        
+          
+        
+      
+
+      <a class="sidebar-nav-item" href="https://github.com/tedostrem">GitHub</a>
+      <a class="sidebar-nav-item" href="https://linkedin.com/in/tedostrem1">Linkedin</a>
+      <a class="sidebar-nav-item" href="mailto: ted.ostrem@gmail.com">ted.ostrem@gmail.com</a>
+    </nav>
+  </div>
+</div>
+
+
+    <div class="content container">
+      <div class="post">
+  <h1 class="post-title">Safeguarding your deployments with Packer</h1>
+  <span class="post-date">05 Jul 2016</span>
+  <p>For me, one of the greatest challenges of building our solution was making sure we had the ability to deploy on-premise, or on any cloud provider.</p>
+
+<p>At the root of all the tools we use to make this possible is <a href="https://www.packer.io/">Packer</a>.</p>
+
+<blockquote>
+  <p>“Packer is an open source tool for creating identical machine images for multiple platforms from a single source configuration.” - Hashicorp</p>
+</blockquote>
+
+<p>By using Packer we know can pack all of our applications and their dependencies into a deployable image, through a single configuration, that can be easily installed on our cloud clusters or on-premise bare metal clusters,</p>
+
+<p>Traditionally when deploying a cluster of machines you often do the provisioning through a configuration management tool like Ansible, Puppet or Chef.</p>
+
+<p>But whether you are provisioning thousands of servers or only a dozen, not only will it take a considerable amount of time but also every step along the way things can fail and very often does, even with idempotent provisioning scripts.</p>
+
+<p>That’s because even if it ran correctly last time, maybe links on the internet have changed or an external software package was updated during provisioning and it no longer works. You end up trusting a lot of the internet to be stable which just does not happen in reality.</p>
+
+<p><a href="http://www.theregister.co.uk/2016/03/23/npm_left_pad_chaos/">How one developer just broke Node, Babel and thousands of projects in 11 lines of JavaScript</a></p>
+
+<p>By using Packer to pack your OS and dependencies into one image you have defended against the instability of the outside world without sacrificing reproducibility. Throw packer into your CI/CD pipeline and you can achieve an immutable server configuration and not have to worry about any of your cluster nodes ending up in an inconsistent state. When one gets ill you don’t nurse it, you throw it away and get a new one aligning to the <a href="https://blog.engineyard.com/2014/pets-vs-cattle">Pets vs Cattle</a> analogy.
+<img src="/assets/sysadmin.jpg" alt="Happy sysadmin" />
+<em>Happy sysadmin</em></p>
+
+<p>We have seen in theory how packer can be applied to your production servers, but can the same concept be applied to your development environment?</p>
+
+<p>The short answer is yes, so stay tuned (feel free to sign up for our mailing list), because in the next article we will get you familiar with Packer while setting up a “devbox” for you and your team. It’s been a great time saver for me, and I hope it will help you too.</p>
+
+<p><a href="/devops/2016/07/05/safeguarding_your_deployments_with_packer">Check out a follow-up post on how to build a devbox with Packer, Vagrant and Ansible.</a></p>
+
+</div>
+
+ 
+
+<div class="related">
+  <h2>Related Posts</h2>
+  <ul class="related-posts">
+    
+      <li>
+        <h3>
+          <a href="/devops/2016/07/21/monorepo-shared-code-and-isolated-fast-docker-builds/">
+            Monorepo, Shared Code and Isolated Fast Docker Builds
+            <small>21 Jul 2016</small>
+          </a>
+        </h3>
+      </li>
+    
+      <li>
+        <h3>
+          <a href="/devops/2016/07/12/building_a_devbox_with_packer_vagrant_and_ansible/">
+            Building a Devbox with Packer, Vagrant and Ansible
+            <small>12 Jul 2016</small>
+          </a>
+        </h3>
+      </li>
+    
+  </ul>
+</div>
+
+    </div>
+
+  </body>
+</html>

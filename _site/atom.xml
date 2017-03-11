@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+ <title>Ted Östrem</title>
+ <link href="http://localhost:4000/atom.xml" rel="self"/>
+ <link href="http://localhost:4000/"/>
+ <updated>2017-03-11T16:03:58+08:00</updated>
+ <id>http://localhost:4000</id>
+ <author>
+   <name>Ted Östrem</name>
+   <email></email>
+ </author>
+
+ 
+ <entry>
+   <title>Monorepo, Shared Code and Isolated Fast Docker Builds</title>
+   <link href="http://localhost:4000/devops/2016/07/21/monorepo-shared-code-and-isolated-fast-docker-builds/"/>
+   <updated>2016-07-21T00:00:00+08:00</updated>
+   <id>http://localhost:4000/devops/2016/07/21/monorepo-shared-code-and-isolated-fast-docker-builds</id>
+   <content type="html">&lt;p&gt;Docker does not make it easy for those who want to do isolated builds of separate applications using shared code in a monorepo.&lt;/p&gt;
+
+&lt;p&gt;There are probably many ways to solve it, but for me, finding a way that works in a consistent way for all of the projects and languages in our code base was not trivial.
+Here I’m going to present a solution that works for us at Traintracks.&lt;/p&gt;
+
+&lt;p&gt;This solution is agnostic to language, package manager, build system, project hierarchy and can be implemented in the same way throughout your whole stack. (Please do comment if you notice a case where it’s not)&lt;/p&gt;
+
+&lt;p&gt;So here it goes!&lt;/p&gt;
+
+&lt;h5 id=&quot;cached-dependencies&quot;&gt;Cached dependencies&lt;/h5&gt;
+&lt;p&gt;If you’ve ever used Scala and SBT, you probably know that you’ll have enough time to grow and cut your toenails (might even start eating them) in between builds if your build cache gets reset at each build.&lt;/p&gt;
+
+&lt;p&gt;The immutable nature of docker plus the fact that SBT does not have have a &lt;code class=&quot;highlighter-rouge&quot;&gt;package.json&lt;/code&gt; or a &lt;code class=&quot;highlighter-rouge&quot;&gt;requirements.txt&lt;/code&gt; file like &lt;code class=&quot;highlighter-rouge&quot;&gt;npm&lt;/code&gt;/&lt;code class=&quot;highlighter-rouge&quot;&gt;pip&lt;/code&gt; means that we can’t cache our dependencies easily.&lt;/p&gt;
+
+&lt;p&gt;Every time we update some code we are back to 0 because the downloading of dependencies and building of code happens in the same step.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Build containers to the rescue?&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;It goes pretty much like this.&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;You create a container with all the tools to build your application.&lt;/li&gt;
+  &lt;li&gt;You run the container and tell it to build your application with your project folder mounted into a folder in the container.&lt;/li&gt;
+  &lt;li&gt;You execute your build inside of the container and everything is persisted on your host for your next build.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;All good? not really, unless you also mounted your ~/.m2 or ~/.ivy2 folder or redirected them to somewhere else and also don’t mind keeping the same build artifacts shared between your host and docker container.&lt;/p&gt;
+
+&lt;p&gt;Adding to that, if you are in Vagrant and share your workspace volume with your host and have not set up NFS then be prepared for really slow build times.&lt;/p&gt;
+
+&lt;p&gt;Besides, you still want to have your &lt;a href=&quot;http://blog.traintracks.io/building-a-devbox-with-packer-vagrant-and-ansible-2/&quot;&gt;static dependencies cached away and separate from your dynamic dependencies&lt;/a&gt; so that your team’s code can be built by all engineers regardless of how broken the internet is at that point. This is particularly relevant if you are behind a corporate firewall or in someplace with internet connectivity issues.&lt;/p&gt;
+
+&lt;p&gt;That means that your build container needs to already come shipped with the third party dependencies required before we execute the build in it.&lt;/p&gt;
+
+&lt;p&gt;To summarize, we need to do an initial build of the application inside the container before it can act as a pre-cached build container. As dependencies update the build container will be rebuilt.&lt;/p&gt;
+
+&lt;p&gt;Let’s continue to the next requirement.&lt;/p&gt;
+
+&lt;h5 id=&quot;shared-code&quot;&gt;Shared code&lt;/h5&gt;
+&lt;p&gt;Maybe you made a nice library with some transformations that you want to use both in your data ingestion app and in your query application.
+On top of that, maybe one of the engineers on your team enjoys sitting in IntelliJ with all the Scala projects open in the same workspace, modifying the shared library code and recompile both of his projects from within the IDE.&lt;/p&gt;
+
+&lt;p&gt;How do we build individual applications isolated when they have shared dependencies above themselves in the project hierarchy?&lt;/p&gt;
+
+&lt;p&gt;Lets imagine a monorepo and try to figure out how to build coolapp and awesomeapp that both share the dependencies lib1 and lib2.
+We are going to use Golang for this example instead of Scala (for simplicity) but the same concepts apply.&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;├── coolapp
+│   ├── coolapp.builder.dockerfile
+│   ├── ...
+├── awesomeapp
+│   ├── awesomeapp.builder.dockerfile
+│   ├── 
+├── lib1
+│   └── ...
+└── lib2
+    └── ...
+└── i_am_too_fat_for_your_build_context
+    └── ...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;We can’t just execute &lt;code class=&quot;highlighter-rouge&quot;&gt;docker build -t coolapp .&lt;/code&gt; inside of coolapp because lib1 and lib2 are outside of it’s context.&lt;/p&gt;
+
+&lt;p&gt;However, we can move the context up one directory and specify the dockerfile like this.&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;docker build -t coolapp -f coolapp/Dockerfile . 
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;We are getting there. but wait, there is a folder that says its too fat for your docker context and we are not even depending on it.&lt;/p&gt;
+
+&lt;p&gt;What if we have so many projects in this repo that the size of the build context we send to docker ends up being a huge build time bottleneck?&lt;/p&gt;
+
+&lt;p&gt;Typically we would add a .dockerignore file that tells docker which files to ignore when uploading the context but that won’t work here since what we want to ignore is conditional (depending on which app we are building).&lt;/p&gt;
+
+&lt;p&gt;So what we need to do is to cherry pick our build context and send it to docker (Note that we’re using GNU Tar and not BSD Tar).&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;tar -zcf - ../lib1 ../lib2 | docker build -t coolapp-builder -f coolapp/coolapp.builder.dockerfile
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;em&gt;GNU Tar also takes –exclude-from-file where you can pass a .gitignore or a .dockerignore. Note that .gitignore have
+expansion rules not supported by Tar so you are either gonna have to tar dependencies individually and concatenated, ask git for the relevant files or align to a unified ignore pattern across your libraries.&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;Lets have a look at the Dockerfile in coolapp.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-docker&quot;&gt;FROM golang:1.6
+RUN apt-get update &amp;amp;&amp;amp; apt-get install -y rsync
+ADD . /go/src/traintracks/
+WORKDIR /go/src/traintracks/coolapp
+RUN go get ./...
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Lets build the container, jump into it and look at the content of our GOPATH.&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;docker &lt;span class=&quot;nb&quot;&gt;exec&lt;/span&gt; -it coolapp-builder bash
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;tree &lt;span class=&quot;nv&quot;&gt;$GOPATH&lt;/span&gt;
+|-- bin
+|   |-- coolapp
+|-- pkg
+|   |-- linux_amd64
+|       |-- github.com
+|       |  |-- Sirupsen
+|       |       |-- logrus.a
+|       |- traintracks
+|           |-- lib1.a
+|           |-- lib2.a
+|-- src
+    |-- github.com
+    |   |- Sirupsen
+    |       -- logrus
+    |           |--  ...
+        -- traintracks
+        |-- coolapp
+        |   |-- coolapp.builder.dockerfile
+        |   |-- coolapp.dockerfile
+        |   |-- coolapp.go
+        |-- lib1
+        |   -- lib1.go
+        --- lib2
+            -- lib2.go
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;It has downloaded our dependencies from the internet and also built coolapp-builder with our cherry picked dependencies.&lt;/p&gt;
+
+&lt;p&gt;Now we have edited a line of code in lib1 and want to rebuild coolapp.
+We are going to execute the container with the build context mounted to /mount and tell it to make an rsync between /mount and the corresponding folder in the GOPATH.&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;rsync -auiv --filter&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;se&quot;&gt;\&quot;&lt;/span&gt;:- .gitignore&lt;span class=&quot;se&quot;&gt;\&quot;&lt;/span&gt; /mount/ /go/src/traintracks/
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;em&gt;Remember what I said about .gitignore passed into Tar, the same applies here&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;Now we just have to build the app again with a &lt;code class=&quot;highlighter-rouge&quot;&gt;go get ./...&lt;/code&gt; and unless you have new internet dependencies since last build the build will be as fast as your CPU and disk.&lt;/p&gt;
+
+&lt;p&gt;Final step is to copy our artifacts to somewhere in the mounted folder.&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;cp -v /go/bin/coolapp  /mount/coolapp/output/
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Back on our host we can inspect the folder again&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;├── coolapp.builder.dockerfile
+├── coolapp.go
+└── output
+    └── coolapp
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So there is your coolapp binary ready for you to throw it into a plain linux container without any builds tools or source code.
+This will keep your containers lean and will avoid potential leakage of code.&lt;/p&gt;
+
+&lt;p&gt;coolapp.dockerfile might look something like this&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-docker&quot;&gt;FROM ubuntu:14.04
+ADD output/* /usr/local/bin
+CMD coolapp
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h5 id=&quot;good-ol-makefiles&quot;&gt;Good ol’ Makefiles&lt;/h5&gt;
+&lt;p&gt;That was a lot of steps and it might seem like a very troublesome process but actually we can wrap all of it in this &lt;a href=&quot;https://github.com/traintracks/docker_monorepo_example/blob/master/src/traintracks/coolapp/Makefile&quot;&gt;Makefile&lt;/a&gt; and work ourselves towards a generalised solution that will work for all  of our projects.&lt;/p&gt;
+
+&lt;p&gt;I have created an example repository that you can clone and try out.&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;git clone git@github.com:traintracks/docker_monorepo_example.git
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;make builder   &lt;span class=&quot;c&quot;&gt;# Creates the builder container&lt;/span&gt;
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;make build     &lt;span class=&quot;c&quot;&gt;# Builds project using builder container&lt;/span&gt;
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;make runner    &lt;span class=&quot;c&quot;&gt;# Creates the runner container&lt;/span&gt;
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;make run       &lt;span class=&quot;c&quot;&gt;# Runs coolapp&lt;/span&gt;
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;make all       &lt;span class=&quot;c&quot;&gt;# Runs all of the previous steps&lt;/span&gt;
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;make           &lt;span class=&quot;c&quot;&gt;# Runs all targets except builder&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;To summarise what all of this gave us.&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Pre-cached dependencies without a requirements file.&lt;/li&gt;
+  &lt;li&gt;Separation between build/run containers.&lt;/li&gt;
+  &lt;li&gt;No dirty artifacts on host.&lt;/li&gt;
+  &lt;li&gt;Support for a project hierarchy of your choice.&lt;/li&gt;
+  &lt;li&gt;Fast builds on shared disks in Vagrant.&lt;/li&gt;
+  &lt;li&gt;A unified build system for all your applications.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;If you think you might have a better solution than what I presented here or have some cool improvements please leave me a comment ! I’m more than happy to learn how others have tackled these problems.&lt;/p&gt;
+</content>
+ </entry>
+ 
+ <entry>
+   <title>Building a Devbox with Packer, Vagrant and Ansible</title>
+   <link href="http://localhost:4000/devops/2016/07/12/building_a_devbox_with_packer_vagrant_and_ansible/"/>
+   <updated>2016-07-12T00:00:00+08:00</updated>
+   <id>http://localhost:4000/devops/2016/07/12/building_a_devbox_with_packer_vagrant_and_ansible</id>
+   <content type="html">&lt;p&gt;In the previous article &lt;a href=&quot;/devops/2016/07/05/safeguarding_your_deployments_with_packer&quot;&gt;Safeguarding your deployments with packer&lt;/a&gt; we explained in theory how we can use Packer to achieve immutable server configurations.&lt;/p&gt;
+
+&lt;p&gt;At Traintracks, we not only use Packer for server deployments but also for our development environment.&lt;/p&gt;
+
+&lt;p&gt;There are many benefits to this such as:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Every engineer’s development environment is the same.&lt;/li&gt;
+  &lt;li&gt;New engineers can start being productive from day one.&lt;/li&gt;
+  &lt;li&gt;What works on my machine will work on any other engineers machine.&lt;/li&gt;
+  &lt;li&gt;What works on my machine will (probably) work in production.&lt;/li&gt;
+  &lt;li&gt;Development environment is host operating system agnostic (Even works for windows users).&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;When using Packer for server deployments you want to keep all of your server configurations as immutable as possible. However, for a development environment, it’s just not practical to throw away your devbox and build a new one every time something in the dev environment has been updated.&lt;/p&gt;
+
+&lt;p&gt;Instead of only optimising for immutability and consistency we also need to optimise for efficiency (developer hours cost more than computer hours).&lt;/p&gt;
+
+&lt;p&gt;This is why we are gonna bring in two new concepts here:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Static dependencies (Dependencies that do not get updated very often, eg. operating system, system packages, third party software like docker, ansible, git, curl etc).&lt;/li&gt;
+  &lt;li&gt;Dynamic dependencies (In-house tooling and configuration files that are constantly iterated on)&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;We are going to use Packer to pack all of our static dependencies and Ansible to provision our dynamic dependencies inside of Vagrant.&lt;/p&gt;
+
+&lt;p&gt;A simple example to clarify what I mean:&lt;/p&gt;
+
+&lt;p&gt;At Traintracks we have a remote working culture but most of our engineers are in Beijing.&lt;/p&gt;
+
+&lt;p&gt;That means that everything that requires free and fast access to the greater internet goes into our static dependencies (Packer). Third party installation scripts might be pulling from Amazon S3 (blocked in China).&lt;/p&gt;
+
+&lt;p&gt;Kubernetes is downloaded from google servers, which means it is also blocked.&lt;/p&gt;
+
+&lt;p&gt;Due to internet connectivity and speed limitations we want these types of dependencies to be downloaded and configured once and then distributed to all the team members without anyone having to jump on a VPN to download software dependencies.&lt;/p&gt;
+
+&lt;p&gt;Of course we could host these dependencies on our own servers and we very often do but for dependencies that are not being changed a lot (our static dependencies) we prefer to grab them directly from the correct source once, and distribute everywhere just like we do for our production servers.&lt;/p&gt;
+
+&lt;p&gt;So, enough talking and let’s get to it!&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Prerequisites&lt;/strong&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Packer 0.10 or above&lt;/li&gt;
+  &lt;li&gt;Vagrant 1.8.1 or above.&lt;/li&gt;
+  &lt;li&gt;Ansible 2.0 or above.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Assuming you’re on a mac and use &lt;a href=&quot;http://brew.sh&quot;&gt;homebrew&lt;/a&gt;:&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;brew cask install virtualbox
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;brew cask install vagrant
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;brew install packer
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;brew install ansible
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;&lt;strong&gt;Packer (Static dependencies)&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;We have prepared a boilerplate for a Packer configuration that is very similar to the one we use at Traintracks that we will use as our base.&lt;/p&gt;
+
+&lt;p&gt;This boilerplate will give you a box containing:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Ubuntu 16.04&lt;/li&gt;
+  &lt;li&gt;VirtualBox Guest Additions&lt;/li&gt;
+  &lt;li&gt;Docker, kubectl and kargo&lt;/li&gt;
+  &lt;li&gt;git, wget, curl, vim, zsh, htop, tmux, ntp&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;git clone git@github.com:traintracks/devbox.git
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;cd &lt;/span&gt;devbox
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Lets start by inspecting the packer folder&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;packer
+├── ansible
+│   └── playbook.yml
+├── devbox.json
+├── files
+│   └── motd
+├── http
+│   └── preseed.cfg
+└── scripts
+    ├── ansible.sh
+    ├── cleanup.sh
+    ├── install.sh
+    └── setup.sh
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;strong&gt;devbox.json&lt;/strong&gt; is the file that explains to packer how to build the devbox, which files to copy and which scripts to run.
+You can also add provisioners for other image types (ec2, vmware etc) in here.
+If you want to use another base operating system you define that
+in here and provide an url and hash sum to the base image.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;preseed.cfg&lt;/strong&gt; will be fetched by the Ubuntu installer from a local web server that Packer has spun-up that will automate the Ubuntu installation by automatically providing answers to all of the installation prompts.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;scripts folder&lt;/strong&gt; contains scripts that makes little sense to perform with ansible. Eg: ansible.sh installs ansible and cleanup.sh does final cleanup before exporting the box.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;playbook.yml&lt;/strong&gt; is the ansible playbook where you define packages to be installed and other configurations.&lt;/p&gt;
+
+&lt;p&gt;To customise the devbox to your needs you will mainly be interested in devbox.json and playbook.yml.&lt;/p&gt;
+
+&lt;p&gt;Now we can go ahead and build the devbox with packer.&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;cd &lt;/span&gt;packer
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;packer build devbox.json
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;em&gt;To see the installation progress you can either go from the VirtualBox UI, watch the preview screen, select Show from Machine menu, or set headless to false in the devbox.json file.&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dynamic dependencies&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;As mentioned earlier your team might have tooling or configuration that is frequently updated which you want to propagate throughout your team more often than you want to build a new box with Packer.&lt;/p&gt;
+
+&lt;p&gt;One example could be a company wide ssh config or a common zshrc file.
+The boilerplate contains a simple example on how this is done.&lt;/p&gt;
+
+&lt;p&gt;Lets have a look inside of the Vagrantfile.&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;cd&lt;/span&gt; ..
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;cat Vagrantfile
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Check out the lines between  &lt;code class=&quot;highlighter-rouge&quot;&gt;# PROVISION START&lt;/code&gt; and &lt;code class=&quot;highlighter-rouge&quot;&gt;# PROVISION END&lt;/code&gt;&lt;/p&gt;
+
+&lt;p&gt;The first three lines copies your host machines default ssh keys into the devbox so that you can access your remote machines from the devbox as you would from your host machine.
+We also copy your git config so that you can make git commits from within the devbox.&lt;/p&gt;
+
+&lt;p&gt;After that you can see that we are calling ansible to do the rest of the provisioning using the ansible/playbook.yml file.&lt;/p&gt;
+
+&lt;div class=&quot;language-yaml highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;  &lt;span class=&quot;s&quot;&gt;---&lt;/span&gt;
+  &lt;span class=&quot;s&quot;&gt;- hosts&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;all&lt;/span&gt;
+    &lt;span class=&quot;s&quot;&gt;tasks&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;Copy zshrc&lt;/span&gt;
+      &lt;span class=&quot;s&quot;&gt;copy&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;src=files/zshrc dest=/home/vagrant/.zshrc&lt;/span&gt;
+    &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;Set shell to zsh&lt;/span&gt;
+      &lt;span class=&quot;s&quot;&gt;become&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;yes&lt;/span&gt;
+      &lt;span class=&quot;s&quot;&gt;user&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;name=vagrant shell=/bin/zsh&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Currently all it does is setting the default shell to zsh and copies a zshrc file into the vagrant home folder but it serves as a template for you to add all of the other tools and configurations that go into the devbox.&lt;/p&gt;
+
+&lt;p&gt;For example you can add a company wide ssh config that is pushed to git and all your team mates have to do to get the new config is a &lt;code class=&quot;highlighter-rouge&quot;&gt;git pull&lt;/code&gt; followed by a &lt;code class=&quot;highlighter-rouge&quot;&gt;vagrant provision&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;Once you notice a dynamic dependency is being updated less frequently you can move it to the static dependencies instead (A mere copy paste between two ansible files).&lt;/p&gt;
+
+&lt;p&gt;Now lets add the box to vagrant, provision it and start it up!&lt;/p&gt;
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;cd&lt;/span&gt; ..
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;vagrant box add devbox packer/builds/devbox.box
+&lt;span class=&quot;gp&quot;&gt;$ &lt;/span&gt;vagrant up
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;If everything went well you should be greeted with a shell looking like this.&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/assets/devbox.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content>
+ </entry>
+ 
+ <entry>
+   <title>Safeguarding your deployments with Packer</title>
+   <link href="http://localhost:4000/devops/2016/07/05/safeguarding_your_deployments_with_packer/"/>
+   <updated>2016-07-05T00:00:00+08:00</updated>
+   <id>http://localhost:4000/devops/2016/07/05/safeguarding_your_deployments_with_packer</id>
+   <content type="html">&lt;p&gt;For me, one of the greatest challenges of building our solution was making sure we had the ability to deploy on-premise, or on any cloud provider.&lt;/p&gt;
+
+&lt;p&gt;At the root of all the tools we use to make this possible is &lt;a href=&quot;https://www.packer.io/&quot;&gt;Packer&lt;/a&gt;.&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Packer is an open source tool for creating identical machine images for multiple platforms from a single source configuration.” - Hashicorp&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;By using Packer we know can pack all of our applications and their dependencies into a deployable image, through a single configuration, that can be easily installed on our cloud clusters or on-premise bare metal clusters,&lt;/p&gt;
+
+&lt;p&gt;Traditionally when deploying a cluster of machines you often do the provisioning through a configuration management tool like Ansible, Puppet or Chef.&lt;/p&gt;
+
+&lt;p&gt;But whether you are provisioning thousands of servers or only a dozen, not only will it take a considerable amount of time but also every step along the way things can fail and very often does, even with idempotent provisioning scripts.&lt;/p&gt;
+
+&lt;p&gt;That’s because even if it ran correctly last time, maybe links on the internet have changed or an external software package was updated during provisioning and it no longer works. You end up trusting a lot of the internet to be stable which just does not happen in reality.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href=&quot;http://www.theregister.co.uk/2016/03/23/npm_left_pad_chaos/&quot;&gt;How one developer just broke Node, Babel and thousands of projects in 11 lines of JavaScript&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;By using Packer to pack your OS and dependencies into one image you have defended against the instability of the outside world without sacrificing reproducibility. Throw packer into your CI/CD pipeline and you can achieve an immutable server configuration and not have to worry about any of your cluster nodes ending up in an inconsistent state. When one gets ill you don’t nurse it, you throw it away and get a new one aligning to the &lt;a href=&quot;https://blog.engineyard.com/2014/pets-vs-cattle&quot;&gt;Pets vs Cattle&lt;/a&gt; analogy.
+&lt;img src=&quot;/assets/sysadmin.jpg&quot; alt=&quot;Happy sysadmin&quot; /&gt;
+&lt;em&gt;Happy sysadmin&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;We have seen in theory how packer can be applied to your production servers, but can the same concept be applied to your development environment?&lt;/p&gt;
+
+&lt;p&gt;The short answer is yes, so stay tuned (feel free to sign up for our mailing list), because in the next article we will get you familiar with Packer while setting up a “devbox” for you and your team. It’s been a great time saver for me, and I hope it will help you too.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href=&quot;/devops/2016/07/05/safeguarding_your_deployments_with_packer&quot;&gt;Check out a follow-up post on how to build a devbox with Packer, Vagrant and Ansible.&lt;/a&gt;&lt;/p&gt;
+</content>
+ </entry>
+ 
+
+</feed>

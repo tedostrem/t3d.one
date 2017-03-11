@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+  <head>
+  <link href="http://gmpg.org/xfn/11" rel="profile">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+
+  <!-- Enable responsiveness on mobile devices-->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+  <title>
+    
+      Building a Devbox with Packer, Vagrant and Ansible &middot; Ted Östrem
+    
+  </title>
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="/public/css/poole.css">
+  <link rel="stylesheet" href="/public/css/syntax.css">
+  <link rel="stylesheet" href="/public/css/hyde.css">
+  <link rel="stylesheet" href="http://fonts.googleapis.com/css?family=PT+Sans:400,400italic,700|Abril+Fatface">
+
+  <!-- Icons -->
+  <link rel="apple-touch-icon-precomposed" sizes="144x144" href="/public/apple-touch-icon-144-precomposed.png">
+                                 <link rel="shortcut icon" href="/public/favicon.ico">
+
+  <!-- RSS -->
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/atom.xml">
+</head>
+
+
+  <body> 
+    <div class="sidebar">
+  <div class="container sidebar-sticky">
+    <div class="sidebar-about">
+      <h1>
+        <a href="/">
+          Ted Östrem
+        </a>
+      </h1>
+      <p class="lead">A Swedish software engineer and contractor in Beijing. Enjoy helping startups with backend systems, infrastructure, devops, automation, tool building and development processes.
+</p>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="sidebar-nav-item" href="/">Home</a>
+
+      
+
+      
+      
+        
+          
+        
+      
+        
+          
+            <a class="sidebar-nav-item" href="/about/">About</a>
+          
+        
+      
+        
+      
+        
+          
+        
+      
+
+      <a class="sidebar-nav-item" href="https://github.com/tedostrem">GitHub</a>
+      <a class="sidebar-nav-item" href="https://linkedin.com/in/tedostrem1">Linkedin</a>
+      <a class="sidebar-nav-item" href="mailto: ted.ostrem@gmail.com">ted.ostrem@gmail.com</a>
+    </nav>
+  </div>
+</div>
+
+
+    <div class="content container">
+      <div class="post">
+  <h1 class="post-title">Building a Devbox with Packer, Vagrant and Ansible</h1>
+  <span class="post-date">12 Jul 2016</span>
+  <p>In the previous article <a href="/devops/2016/07/05/safeguarding_your_deployments_with_packer">Safeguarding your deployments with packer</a> we explained in theory how we can use Packer to achieve immutable server configurations.</p>
+
+<p>At Traintracks, we not only use Packer for server deployments but also for our development environment.</p>
+
+<p>There are many benefits to this such as:</p>
+
+<ul>
+  <li>Every engineer’s development environment is the same.</li>
+  <li>New engineers can start being productive from day one.</li>
+  <li>What works on my machine will work on any other engineers machine.</li>
+  <li>What works on my machine will (probably) work in production.</li>
+  <li>Development environment is host operating system agnostic (Even works for windows users).</li>
+</ul>
+
+<p>When using Packer for server deployments you want to keep all of your server configurations as immutable as possible. However, for a development environment, it’s just not practical to throw away your devbox and build a new one every time something in the dev environment has been updated.</p>
+
+<p>Instead of only optimising for immutability and consistency we also need to optimise for efficiency (developer hours cost more than computer hours).</p>
+
+<p>This is why we are gonna bring in two new concepts here:</p>
+
+<ul>
+  <li>Static dependencies (Dependencies that do not get updated very often, eg. operating system, system packages, third party software like docker, ansible, git, curl etc).</li>
+  <li>Dynamic dependencies (In-house tooling and configuration files that are constantly iterated on)</li>
+</ul>
+
+<p>We are going to use Packer to pack all of our static dependencies and Ansible to provision our dynamic dependencies inside of Vagrant.</p>
+
+<p>A simple example to clarify what I mean:</p>
+
+<p>At Traintracks we have a remote working culture but most of our engineers are in Beijing.</p>
+
+<p>That means that everything that requires free and fast access to the greater internet goes into our static dependencies (Packer). Third party installation scripts might be pulling from Amazon S3 (blocked in China).</p>
+
+<p>Kubernetes is downloaded from google servers, which means it is also blocked.</p>
+
+<p>Due to internet connectivity and speed limitations we want these types of dependencies to be downloaded and configured once and then distributed to all the team members without anyone having to jump on a VPN to download software dependencies.</p>
+
+<p>Of course we could host these dependencies on our own servers and we very often do but for dependencies that are not being changed a lot (our static dependencies) we prefer to grab them directly from the correct source once, and distribute everywhere just like we do for our production servers.</p>
+
+<p>So, enough talking and let’s get to it!</p>
+
+<p><strong>Prerequisites</strong></p>
+
+<ul>
+  <li>Packer 0.10 or above</li>
+  <li>Vagrant 1.8.1 or above.</li>
+  <li>Ansible 2.0 or above.</li>
+</ul>
+
+<p>Assuming you’re on a mac and use <a href="http://brew.sh">homebrew</a>:</p>
+<div class="language-shell highlighter-rouge"><pre class="highlight"><code><span class="gp">$ </span>brew cask install virtualbox
+<span class="gp">$ </span>brew cask install vagrant
+<span class="gp">$ </span>brew install packer
+<span class="gp">$ </span>brew install ansible
+</code></pre>
+</div>
+
+<p><strong>Packer (Static dependencies)</strong></p>
+
+<p>We have prepared a boilerplate for a Packer configuration that is very similar to the one we use at Traintracks that we will use as our base.</p>
+
+<p>This boilerplate will give you a box containing:</p>
+
+<ul>
+  <li>Ubuntu 16.04</li>
+  <li>VirtualBox Guest Additions</li>
+  <li>Docker, kubectl and kargo</li>
+  <li>git, wget, curl, vim, zsh, htop, tmux, ntp</li>
+</ul>
+
+<div class="language-shell highlighter-rouge"><pre class="highlight"><code><span class="gp">$ </span>git clone git@github.com:traintracks/devbox.git
+<span class="gp">$ </span><span class="nb">cd </span>devbox
+</code></pre>
+</div>
+<p>Lets start by inspecting the packer folder</p>
+<div class="language-shell highlighter-rouge"><pre class="highlight"><code>packer
+├── ansible
+│   └── playbook.yml
+├── devbox.json
+├── files
+│   └── motd
+├── http
+│   └── preseed.cfg
+└── scripts
+    ├── ansible.sh
+    ├── cleanup.sh
+    ├── install.sh
+    └── setup.sh
+</code></pre>
+</div>
+<p><strong>devbox.json</strong> is the file that explains to packer how to build the devbox, which files to copy and which scripts to run.
+You can also add provisioners for other image types (ec2, vmware etc) in here.
+If you want to use another base operating system you define that
+in here and provide an url and hash sum to the base image.</p>
+
+<p><strong>preseed.cfg</strong> will be fetched by the Ubuntu installer from a local web server that Packer has spun-up that will automate the Ubuntu installation by automatically providing answers to all of the installation prompts.</p>
+
+<p><strong>scripts folder</strong> contains scripts that makes little sense to perform with ansible. Eg: ansible.sh installs ansible and cleanup.sh does final cleanup before exporting the box.</p>
+
+<p><strong>playbook.yml</strong> is the ansible playbook where you define packages to be installed and other configurations.</p>
+
+<p>To customise the devbox to your needs you will mainly be interested in devbox.json and playbook.yml.</p>
+
+<p>Now we can go ahead and build the devbox with packer.</p>
+<div class="language-shell highlighter-rouge"><pre class="highlight"><code><span class="gp">$ </span><span class="nb">cd </span>packer
+<span class="gp">$ </span>packer build devbox.json
+</code></pre>
+</div>
+<p><em>To see the installation progress you can either go from the VirtualBox UI, watch the preview screen, select Show from Machine menu, or set headless to false in the devbox.json file.</em></p>
+
+<p><strong>Dynamic dependencies</strong></p>
+
+<p>As mentioned earlier your team might have tooling or configuration that is frequently updated which you want to propagate throughout your team more often than you want to build a new box with Packer.</p>
+
+<p>One example could be a company wide ssh config or a common zshrc file.
+The boilerplate contains a simple example on how this is done.</p>
+
+<p>Lets have a look inside of the Vagrantfile.</p>
+<div class="language-shell highlighter-rouge"><pre class="highlight"><code><span class="gp">$ </span><span class="nb">cd</span> ..
+<span class="gp">$ </span>cat Vagrantfile
+</code></pre>
+</div>
+
+<p>Check out the lines between  <code class="highlighter-rouge"># PROVISION START</code> and <code class="highlighter-rouge"># PROVISION END</code></p>
+
+<p>The first three lines copies your host machines default ssh keys into the devbox so that you can access your remote machines from the devbox as you would from your host machine.
+We also copy your git config so that you can make git commits from within the devbox.</p>
+
+<p>After that you can see that we are calling ansible to do the rest of the provisioning using the ansible/playbook.yml file.</p>
+
+<div class="language-yaml highlighter-rouge"><pre class="highlight"><code>  <span class="s">---</span>
+  <span class="s">- hosts</span><span class="pi">:</span> <span class="s">all</span>
+    <span class="s">tasks</span><span class="pi">:</span>
+    <span class="pi">-</span> <span class="s">name</span><span class="pi">:</span> <span class="s">Copy zshrc</span>
+      <span class="s">copy</span><span class="pi">:</span> <span class="s">src=files/zshrc dest=/home/vagrant/.zshrc</span>
+    <span class="pi">-</span> <span class="s">name</span><span class="pi">:</span> <span class="s">Set shell to zsh</span>
+      <span class="s">become</span><span class="pi">:</span> <span class="s">yes</span>
+      <span class="s">user</span><span class="pi">:</span> <span class="s">name=vagrant shell=/bin/zsh</span>
+</code></pre>
+</div>
+<p>Currently all it does is setting the default shell to zsh and copies a zshrc file into the vagrant home folder but it serves as a template for you to add all of the other tools and configurations that go into the devbox.</p>
+
+<p>For example you can add a company wide ssh config that is pushed to git and all your team mates have to do to get the new config is a <code class="highlighter-rouge">git pull</code> followed by a <code class="highlighter-rouge">vagrant provision</code>.</p>
+
+<p>Once you notice a dynamic dependency is being updated less frequently you can move it to the static dependencies instead (A mere copy paste between two ansible files).</p>
+
+<p>Now lets add the box to vagrant, provision it and start it up!</p>
+<div class="language-shell highlighter-rouge"><pre class="highlight"><code><span class="gp">$ </span><span class="nb">cd</span> ..
+<span class="gp">$ </span>vagrant box add devbox packer/builds/devbox.box
+<span class="gp">$ </span>vagrant up
+</code></pre>
+</div>
+
+<p>If everything went well you should be greeted with a shell looking like this.</p>
+
+<p><img src="/assets/devbox.png" alt="" /></p>
+
+</div>
+
+ 
+
+<div class="related">
+  <h2>Related Posts</h2>
+  <ul class="related-posts">
+    
+      <li>
+        <h3>
+          <a href="/devops/2016/07/21/monorepo-shared-code-and-isolated-fast-docker-builds/">
+            Monorepo, Shared Code and Isolated Fast Docker Builds
+            <small>21 Jul 2016</small>
+          </a>
+        </h3>
+      </li>
+    
+      <li>
+        <h3>
+          <a href="/devops/2016/07/05/safeguarding_your_deployments_with_packer/">
+            Safeguarding your deployments with Packer
+            <small>05 Jul 2016</small>
+          </a>
+        </h3>
+      </li>
+    
+  </ul>
+</div>
+
+    </div>
+
+  </body>
+</html>

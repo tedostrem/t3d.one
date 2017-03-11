@@ -1,0 +1,28 @@
+# Dependencies
+markdown:         kramdown
+highlighter:      rouge
+
+# Permalinks
+permalink:        pretty
+
+# Setup
+title:            Ted Östrem 
+tagline:          'A Jekyll theme'
+description: > # ignore linebreak until url
+  A Swedish software engineer and contractor in Beijing. Enjoy helping startups with backend systems, infrastructure, devops, automation, tool building and development processes.
+url:              http://t3d.one
+baseurl:          /
+
+author:
+  name:           'Ted Östrem'
+  url:            http://t3d.one
+
+paginate:         5
+
+github_username: tedostrem
+linkedin_username: tedostrem1
+email: ted.ostrem@gmail.com
+
+# Custom vars
+version:          2.1.0
+gems: [jekyll-paginate]
