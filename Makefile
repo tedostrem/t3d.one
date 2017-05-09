@@ -9,6 +9,7 @@ run :
     --name nginx-proxy \
     -v `pwd`/certs:/etc/nginx/certs:ro \
     -v /etc/nginx/vhost.d \
+    -v `pwd`/access.log:/var/log/nginx/access.log \
     -v /usr/share/nginx/html \
     -v /var/run/docker.sock:/tmp/docker.sock:ro \
     jwilder/nginx-proxy
